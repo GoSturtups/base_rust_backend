@@ -9,7 +9,6 @@ CREATE TABLE users (
     password_hash        TEXT,
     email_confirmed      BOOLEAN NOT NULL DEFAULT false,
     permissions          TEXT[] NOT NULL DEFAULT '{}',
-    firebase_uid         TEXT UNIQUE,
     language             TEXT,
     notifications_email  BOOLEAN NOT NULL DEFAULT true,
     blocked              BOOLEAN NOT NULL DEFAULT false,

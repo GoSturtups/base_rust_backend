@@ -91,7 +91,6 @@ impl AuthService {
                 email: email.clone(),
                 password_hash: Some(hash_password(password)?),
                 permissions: permissions_to_strings(&Permission::defaults()),
-                firebase_uid: None,
                 language: language.clone(),
                 email_confirmed: false,
             })
@@ -205,20 +204,21 @@ impl AuthService {
 
     // ---- firebase ----
 
-    /// Log in or register through Firebase. If Firebase reports the email as
-    /// unverified we send our own confirmation code and withhold tokens.
+    /// Log in or register through Firebase. Firebase is used only to validate
+    /// the token and obtain a (verified) email; the user is then looked up in
+    /// our own database by that email. Firebase UIDs are never used or stored.
+    /// If Firebase reports the email as unverified we send our own confirmation
+    /// code and withhold tokens.
     pub async fn firebase_auth(&self, id_token: &str) -> AppResult<AuthTokens> {
         let fb = self.firebase.verify(id_token).await?;
 
-        let existing = match self.repo.get_by_firebase_uid(&fb.uid).await? {
-            Some(u) => Some(u),
-            None => match &fb.email {
-                Some(email) => self.repo.get_by_email(email).await?,
-                None => None,
-            },
-        };
+        let email = fb
+            .email
+            .as_deref()
+            .ok_or_else(|| AppError::Firebase("firebase account has no email".into()))?;
+        let email = normalize_email(email)?;
 
-        let user = match existing {
+        let user = match self.repo.get_by_email(&email).await? {
             Some(user) => {
                 if fb.email_verified && !user.email_confirmed {
                     self.repo.set_email_confirmed(user.id).await?;
@@ -228,16 +228,11 @@ impl AuthService {
                 }
             }
             None => {
-                let email = fb
-                    .email
-                    .clone()
-                    .ok_or_else(|| AppError::Firebase("firebase account has no email".into()))?;
                 self.repo
                     .insert(NewUser {
-                        email: normalize_email(&email)?,
+                        email: email.clone(),
                         password_hash: None,
                         permissions: permissions_to_strings(&Permission::defaults()),
-                        firebase_uid: Some(fb.uid.clone()),
                         language: None,
                         email_confirmed: fb.email_verified,
                     })

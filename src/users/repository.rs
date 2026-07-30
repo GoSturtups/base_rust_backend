@@ -20,7 +20,6 @@ pub struct NewUser {
     pub email: String,
     pub password_hash: Option<String>,
     pub permissions: Vec<String>,
-    pub firebase_uid: Option<String>,
     pub language: Option<String>,
     pub email_confirmed: bool,
 }
@@ -51,25 +50,16 @@ impl UserRepository {
         Ok(row)
     }
 
-    pub async fn get_by_firebase_uid(&self, uid: &str) -> AppResult<Option<UserRow>> {
-        let row = sqlx::query_as::<_, UserRow>("SELECT * FROM users WHERE firebase_uid = $1")
-            .bind(uid)
-            .fetch_optional(&self.pool)
-            .await?;
-        Ok(row)
-    }
-
     pub async fn insert(&self, user: NewUser) -> AppResult<UserRow> {
         let row = sqlx::query_as::<_, UserRow>(
             r#"INSERT INTO users
-               (email, password_hash, permissions, firebase_uid, language, email_confirmed)
-               VALUES ($1, $2, $3, $4, $5, $6)
+               (email, password_hash, permissions, language, email_confirmed)
+               VALUES ($1, $2, $3, $4, $5)
                RETURNING *"#,
         )
         .bind(user.email.to_lowercase())
         .bind(user.password_hash)
         .bind(&user.permissions)
-        .bind(user.firebase_uid)
         .bind(user.language)
         .bind(user.email_confirmed)
         .fetch_one(&self.pool)
