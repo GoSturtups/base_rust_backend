@@ -13,7 +13,6 @@
 
 mod common;
 
-use base_backend::core::permission::Permission;
 use common::*;
 use serde_json::json;
 
@@ -32,9 +31,11 @@ async fn register_confirm_login_and_me_round_trip() {
     let me = app.gql(ME, Some(&tokens.access)).await;
     assert!(me["errors"].is_null(), "{me}");
     assert_eq!(me["data"]["me"]["email"], json!(email));
+    // Permissions are an open set, so they are exposed as raw strings (their DB
+    // identities) rather than a SCREAMING_CASE GraphQL enum.
     let perms = me["data"]["me"]["permissions"].as_array().unwrap();
-    assert!(perms.iter().any(|p| p == "REGISTERED"));
-    assert!(perms.iter().any(|p| p == "READ_USERS"));
+    assert!(perms.iter().any(|p| p == "registered"));
+    assert!(perms.iter().any(|p| p == "read_users"));
 
     // A confirmed user can log in and get a fresh pair.
     let login = app
@@ -302,7 +303,7 @@ async fn forged_permissions_in_token_are_ignored() {
     let forged = app.forge_access_token(
         &viewer_id,
         &viewer_email,
-        &[Permission::Registered, Permission::ReadUsers, Permission::Moderation],
+        &["registered", "read_users", "moderation"],
     );
 
     let list = app.gql(USERS_WITH_EMAIL, Some(&forged)).await;

@@ -9,7 +9,7 @@
 use crate::core::context::RequestContext;
 use crate::core::error::IntoFieldResult;
 use crate::core::guard::{RequireAuth, RequirePermission};
-use crate::core::permission::Permission;
+use crate::core::permission::CorePermission;
 use crate::users::model::{AuthTokens, UserConnection};
 use crate::users::service::AuthService;
 use async_graphql::{Context, Object, SimpleObject};
@@ -20,7 +20,7 @@ use std::sync::Arc;
 pub struct Viewer {
     pub id: String,
     pub email: String,
-    pub permissions: Vec<Permission>,
+    pub permissions: Vec<String>,
 }
 
 fn service<'a>(ctx: &Context<'a>) -> async_graphql::Result<&'a Arc<AuthService>> {
@@ -44,7 +44,7 @@ impl UsersQuery {
     }
 
     /// Paginated list of registered users. Requires `READ_USERS`.
-    #[graphql(guard = "RequirePermission::new(Permission::ReadUsers)")]
+    #[graphql(guard = "RequirePermission::new(CorePermission::ReadUsers)")]
     async fn users(
         &self,
         ctx: &Context<'_>,

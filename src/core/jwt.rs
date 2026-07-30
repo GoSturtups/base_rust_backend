@@ -7,7 +7,6 @@
 
 use crate::config::JwtConfig;
 use crate::core::error::{AppError, AppResult};
-use crate::core::permission::Permission;
 use chrono::{Duration, Utc};
 use jsonwebtoken::{decode, encode, DecodingKey, EncodingKey, Header, Validation};
 use serde::{Deserialize, Serialize};
@@ -24,8 +23,10 @@ pub struct Claims {
     /// user id
     pub sub: String,
     pub email: String,
+    /// Raw permission strings. Informational only — authorization always
+    /// re-reads permissions from the database (see [`crate::core::context`]).
     #[serde(default)]
-    pub perms: Vec<Permission>,
+    pub perms: Vec<String>,
     pub typ: TokenType,
     pub iss: String,
     pub exp: i64,
@@ -60,7 +61,7 @@ impl JwtService {
         &self,
         user_id: &str,
         email: &str,
-        perms: &[Permission],
+        perms: &[String],
     ) -> AppResult<Tokens> {
         let access = self.issue(user_id, email, perms, TokenType::Access)?;
         let refresh = self.issue(user_id, email, perms, TokenType::Refresh)?;
@@ -74,7 +75,7 @@ impl JwtService {
         &self,
         user_id: &str,
         email: &str,
-        perms: &[Permission],
+        perms: &[String],
         typ: TokenType,
     ) -> AppResult<String> {
         let now = Utc::now();

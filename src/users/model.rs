@@ -1,6 +1,6 @@
 use crate::core::context::RequestContext;
 use crate::core::error::AppError;
-use crate::core::permission::{parse_permissions, Permission};
+use crate::core::permission::{CorePermission, PermissionLike};
 use async_graphql::{Context, ErrorExtensions, Object, SimpleObject, ID};
 use chrono::{DateTime, Utc};
 use uuid::Uuid;
@@ -20,8 +20,9 @@ pub struct UserRow {
 }
 
 impl UserRow {
-    pub fn permissions(&self) -> Vec<Permission> {
-        parse_permissions(&self.permissions)
+    /// The user's raw permission strings, as stored in the database.
+    pub fn permissions(&self) -> Vec<String> {
+        self.permissions.clone()
     }
 }
 
@@ -46,10 +47,10 @@ impl User {
             .unwrap_or(false)
     }
 
-    fn viewer_has(&self, ctx: &Context<'_>, permission: Permission) -> bool {
+    fn viewer_has(&self, ctx: &Context<'_>, permission: impl PermissionLike) -> bool {
         ctx.data_opt::<RequestContext>()
             .and_then(|c| c.current_user.as_ref())
-            .map(|u| u.has_permission(permission))
+            .map(|u| u.has(&permission))
             .unwrap_or(false)
     }
 }
@@ -62,14 +63,16 @@ impl User {
 
     /// Visible to the user themselves or to moderators.
     async fn email(&self, ctx: &Context<'_>) -> async_graphql::Result<String> {
-        if self.is_self(ctx) || self.viewer_has(ctx, Permission::Moderation) {
+        if self.is_self(ctx) || self.viewer_has(ctx, CorePermission::Moderation) {
             Ok(self.row.email.clone())
         } else {
             Err(AppError::AccessDenied.extend())
         }
     }
 
-    async fn permissions(&self) -> Vec<Permission> {
+    /// Raw permission strings. Since permissions are an open set, they are
+    /// exposed as strings rather than a fixed GraphQL enum.
+    async fn permissions(&self) -> Vec<String> {
         self.row.permissions()
     }
 
@@ -79,7 +82,7 @@ impl User {
 
     /// Only moderators (or the user themselves) may see block status.
     async fn blocked(&self, ctx: &Context<'_>) -> async_graphql::Result<bool> {
-        if self.is_self(ctx) || self.viewer_has(ctx, Permission::Moderation) {
+        if self.is_self(ctx) || self.viewer_has(ctx, CorePermission::Moderation) {
             Ok(self.row.blocked)
         } else {
             Err(AppError::AccessDenied.extend())

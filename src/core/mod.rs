@@ -12,7 +12,7 @@ pub mod permission;
 
 pub use context::{CurrentUser, RequestContext};
 pub use error::{codes, AppError, AppResult, IntoFieldResult};
-pub use guard::{RequireAuth, RequirePermission};
+pub use guard::{RequireAllPermissions, RequireAuth, RequirePermission};
 pub use jwt::{Claims, JwtService, TokenType, Tokens};
 pub use module::Module;
-pub use permission::Permission;
+pub use permission::{CorePermission, PermissionLike};

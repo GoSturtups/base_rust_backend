@@ -25,7 +25,6 @@
 use base_backend::build_schema;
 use base_backend::config::Config;
 use base_backend::core::jwt::JwtService;
-use base_backend::core::permission::Permission;
 use base_backend::email::EmailService;
 use base_backend::http::{router, AppState};
 use base_backend::i18n::Localizer;
@@ -209,12 +208,14 @@ impl TestApp {
         JwtService::new(cfg)
     }
 
-    /// Forge an access token for `(user_id, email)` with arbitrary permissions,
-    /// signed with the server's real secret. Used to prove the server trusts the
-    /// database over the token's own claims.
-    pub fn forge_access_token(&self, user_id: &str, email: &str, perms: &[Permission]) -> String {
+    /// Forge an access token for `(user_id, email)` with arbitrary permission
+    /// strings, signed with the server's real secret. Used to prove the server
+    /// trusts the database over the token's own claims — so an attacker may
+    /// claim any raw permission string here.
+    pub fn forge_access_token(&self, user_id: &str, email: &str, perms: &[&str]) -> String {
+        let perms: Vec<String> = perms.iter().map(|s| s.to_string()).collect();
         JwtService::new(self.config.jwt.clone())
-            .issue_pair(user_id, email, perms)
+            .issue_pair(user_id, email, &perms)
             .unwrap()
             .access_token
     }

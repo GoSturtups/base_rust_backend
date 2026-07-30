@@ -45,10 +45,18 @@ Three levels, exactly as required:
 
 * **public** — no guard (e.g. `register`, `login`);
 * **authenticated** — `#[graphql(guard = "RequireAuth")]` (e.g. `setEmailNotifications`);
-* **permission gated** — `#[graphql(guard = "RequirePermission::new(Permission::ReadUsers)")]` (e.g. the `users` list).
+* **permission gated** — `#[graphql(guard = "RequirePermission::new(CorePermission::ReadUsers)")]` (e.g. the `users` list).
 
 Individual **fields** are also gated (see `users::model::User` — `email`/`blocked`
 are only visible to the user themselves or a moderator).
+
+Permissions are an **open set**. The base crate ships `CorePermission`; the
+`PermissionLike` trait (`fn as_str(&self) -> &str`) lets any downstream project
+add its own permission enum without touching this crate. On the wire and at rest
+a permission is just a string (`TEXT[]` column + a claim in the JWT); typed enums
+exist only at the definition and guard sites, where a typo is a compile error.
+Combine requirements — including a mix of core and project permissions — with
+`RequireAllPermissions::new(&[&CorePermission::Moderation, &AppPermission::ReadOrders])`.
 
 Error responses follow the GraphQL standard: a human-readable English message
 plus a stable machine code in `extensions.code` (e.g. `wrong_credentials`,
@@ -74,6 +82,53 @@ cargo run --bin server          # migrations run on startup
 
 Configuration lives in `env.yaml`; any value can be overridden with an env var
 (`DATABASE__URL`, `JWT__SECRET`, `EMAIL__SMTP_PASSWORD`, …).
+
+## Using it as a library (extending the schema & permissions)
+
+Depend on the crate and compose your own roots around the base ones. The base
+`Query`/`Mutation`/`Subscription` carry explicit GraphQL names (`BaseQuery`, …)
+so they nest inside your roots and their fields flatten in:
+
+```rust
+use async_graphql::{MergedObject, Schema};
+
+#[derive(MergedObject, Default)]
+struct Query(base_backend::schema::Query, OrdersQuery);   // base + your own
+
+type AppSchema =
+    Schema<Query, base_backend::schema::Mutation, base_backend::schema::Subscription>;
+```
+
+Add your own permissions by implementing `PermissionLike`, then guard resolvers
+with new or existing permissions — the guards are generic over the trait:
+
+```rust
+use base_backend::core::guard::{RequireAllPermissions, RequirePermission};
+use base_backend::core::permission::{CorePermission, PermissionLike};
+
+#[derive(Clone, Copy)]
+enum AppPermission { ReadOrders, ManageOrders }
+impl PermissionLike for AppPermission {
+    fn as_str(&self) -> &str {
+        match self {
+            AppPermission::ReadOrders => "read_orders",
+            AppPermission::ManageOrders => "manage_orders",
+        }
+    }
+}
+
+#[Object]
+impl OrdersQuery {
+    #[graphql(guard = "RequirePermission::new(AppPermission::ManageOrders)")] // your permission
+    async fn all_orders(&self) -> Vec<Order> { /* … */ }
+
+    #[graphql(guard = "RequirePermission::new(CorePermission::Moderation)")]  // base permission
+    async fn purge(&self) -> bool { /* … */ }
+}
+```
+
+A complete, compiling walkthrough (schema merge + all guard styles) lives in
+[`examples/consumer.rs`](examples/consumer.rs): `cargo run --example consumer`.
 
 ## Request headers
 

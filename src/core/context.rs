@@ -5,24 +5,35 @@
 //!   * `X-Device-Id: <platform>:<id>`         -> device identity
 //!   * `Accept-Language: <lang>`              -> language code
 
-use crate::core::permission::Permission;
+use crate::core::permission::PermissionLike;
 
 /// The authenticated caller. Present only when a valid access token was sent
 /// AND it still matches a live user with the same email (see the auth service).
+///
+/// Permissions are held as their raw string identities because a user may carry
+/// a mix of core and project-defined permissions; typed checks go through
+/// [`CurrentUser::has`], which accepts any [`PermissionLike`].
 #[derive(Debug, Clone)]
 pub struct CurrentUser {
     pub id: String,
     pub email: String,
-    pub permissions: Vec<Permission>,
+    pub permissions: Vec<String>,
 }
 
 impl CurrentUser {
-    pub fn has_permission(&self, permission: Permission) -> bool {
-        self.permissions.contains(&permission)
+    /// Whether the user holds the given (typed) permission.
+    pub fn has<P: PermissionLike + ?Sized>(&self, permission: &P) -> bool {
+        self.has_str(permission.as_str())
     }
 
-    pub fn has_all(&self, required: &[Permission]) -> bool {
-        required.iter().all(|p| self.permissions.contains(p))
+    /// Whether the user holds the permission with this raw string identity.
+    pub fn has_str(&self, permission: &str) -> bool {
+        self.permissions.iter().any(|p| p == permission)
+    }
+
+    /// Whether the user holds every permission in `required` (raw strings).
+    pub fn has_all_str(&self, required: &[String]) -> bool {
+        required.iter().all(|r| self.has_str(r))
     }
 }
 

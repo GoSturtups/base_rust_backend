@@ -1,8 +1,9 @@
 //! Unit tests that need no database or network.
 
 use base_backend::config::{Config, I18nConfig, JwtConfig};
+use base_backend::core::context::CurrentUser;
 use base_backend::core::jwt::JwtService;
-use base_backend::core::permission::{parse_permissions, Permission};
+use base_backend::core::permission::{permissions_to_strings, CorePermission, PermissionLike};
 use base_backend::core::TokenType;
 use base_backend::i18n::Localizer;
 
@@ -19,13 +20,17 @@ fn jwt_config() -> JwtConfig {
 fn jwt_roundtrip_carries_identity_and_permissions() {
     let jwt = JwtService::new(jwt_config());
     let tokens = jwt
-        .issue_pair("user-1", "user@example.com", &[Permission::ReadUsers])
+        .issue_pair(
+            "user-1",
+            "user@example.com",
+            &permissions_to_strings(&[CorePermission::ReadUsers]),
+        )
         .unwrap();
 
     let claims = jwt.decode(&tokens.access_token, TokenType::Access).unwrap();
     assert_eq!(claims.sub, "user-1");
     assert_eq!(claims.email, "user@example.com");
-    assert!(claims.perms.contains(&Permission::ReadUsers));
+    assert!(claims.perms.iter().any(|p| p == "read_users"));
 
     // An access token must not validate as a refresh token.
     assert!(jwt.decode(&tokens.access_token, TokenType::Refresh).is_err());
@@ -45,21 +50,51 @@ fn jwt_rejects_wrong_secret() {
 }
 
 #[test]
-fn permissions_parse_ignores_unknown_values() {
-    let parsed = parse_permissions(&[
-        "read_users".into(),
-        "totally_unknown".into(),
-        "moderation".into(),
-    ]);
-    assert_eq!(parsed, vec![Permission::ReadUsers, Permission::Moderation]);
-}
-
-#[test]
 fn default_permissions_match_spec() {
     assert_eq!(
-        Permission::defaults(),
-        vec![Permission::Registered, Permission::ReadUsers]
+        CorePermission::defaults(),
+        vec![CorePermission::Registered, CorePermission::ReadUsers]
     );
+}
+
+/// Guard against accidental fail-open collisions: no two core permissions may
+/// share a string identity. Downstream projects should extend this assertion to
+/// their own permission set.
+#[test]
+fn core_permission_strings_are_unique() {
+    use std::collections::HashSet;
+    let mut seen = HashSet::new();
+    for p in CorePermission::ALL {
+        let s = p.as_str().to_string();
+        assert!(seen.insert(s.clone()), "duplicate permission string: {s}");
+    }
+}
+
+/// A downstream project's own permission type plugs into the same machinery:
+/// `CurrentUser::has` works across core and project-defined permissions, all
+/// held as raw strings.
+#[test]
+fn custom_permissions_extend_the_core_set() {
+    #[derive(Clone, Copy)]
+    enum AppPermission {
+        ReadOrders,
+    }
+    impl PermissionLike for AppPermission {
+        fn as_str(&self) -> &str {
+            "read_orders"
+        }
+    }
+
+    let user = CurrentUser {
+        id: "u1".into(),
+        email: "u@example.com".into(),
+        permissions: vec!["read_users".into(), "read_orders".into()],
+    };
+
+    assert!(user.has(&CorePermission::ReadUsers)); // core permission
+    assert!(user.has(&AppPermission::ReadOrders)); // project permission
+    assert!(!user.has(&CorePermission::Moderation)); // not granted
+    assert!(user.has_all_str(&permissions_to_strings(&[CorePermission::ReadUsers])));
 }
 
 #[test]

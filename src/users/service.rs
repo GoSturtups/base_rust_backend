@@ -3,7 +3,7 @@
 use crate::core::context::CurrentUser;
 use crate::core::error::{AppError, AppResult};
 use crate::core::jwt::{JwtService, TokenType};
-use crate::core::permission::{permissions_to_strings, Permission};
+use crate::core::permission::{permissions_to_strings, CorePermission};
 use crate::email::{EmailService, NewEmail};
 use crate::i18n::Localizer;
 use crate::users::firebase::FirebaseVerifier;
@@ -90,7 +90,7 @@ impl AuthService {
             .insert(NewUser {
                 email: email.clone(),
                 password_hash: Some(hash_password(password)?),
-                permissions: permissions_to_strings(&Permission::defaults()),
+                permissions: permissions_to_strings(&CorePermission::defaults()),
                 language: language.clone(),
                 email_confirmed: false,
             })
@@ -232,7 +232,7 @@ impl AuthService {
                     .insert(NewUser {
                         email: email.clone(),
                         password_hash: None,
-                        permissions: permissions_to_strings(&Permission::defaults()),
+                        permissions: permissions_to_strings(&CorePermission::defaults()),
                         language: None,
                         email_confirmed: fb.email_verified,
                     })
