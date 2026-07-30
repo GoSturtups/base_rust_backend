@@ -313,6 +313,10 @@ impl AuthService {
             })
             .await?;
         tracing::debug!(%email, %purpose, code = %code, "confirmation code issued");
+        // Dev convenience: local SMTP is usually unavailable, so surface the
+        // one-time code at info level in debug builds. Release builds stay quiet.
+        #[cfg(debug_assertions)]
+        tracing::info!(%email, %purpose, %code, "🔑 one-time code (email not delivered locally)");
         Ok(())
     }
 

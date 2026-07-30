@@ -3,12 +3,16 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Lifecycle of a queued push notification.
+///
+/// `Error` is terminal: a delivery failure is recorded and the notification is
+/// never retried, so a broken FCM path cannot accumulate a backlog that floods
+/// out once delivery recovers. Inspect `last_error` for the reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum NotificationStatus {
     Planned,
     Sending,
     Sent,
-    Failed,
+    Error,
 }
 
 impl NotificationStatus {
@@ -17,7 +21,7 @@ impl NotificationStatus {
             NotificationStatus::Planned => "planned",
             NotificationStatus::Sending => "sending",
             NotificationStatus::Sent => "sent",
-            NotificationStatus::Failed => "failed",
+            NotificationStatus::Error => "error",
         }
     }
 }

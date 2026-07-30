@@ -90,6 +90,17 @@ impl AppError {
             AppError::Internal(_) => INTERNAL,
         }
     }
+
+    /// Full internal detail suitable for logs and DB records — unlike `Display`,
+    /// which is the client-safe message (`Internal` collapses to "internal
+    /// error"). Use this when persisting a failure reason (e.g. `last_error`).
+    pub fn detail(&self) -> String {
+        match self {
+            // `{:#}` renders the whole anyhow cause chain.
+            AppError::Internal(err) => format!("{err:#}"),
+            other => other.to_string(),
+        }
+    }
 }
 
 /// Convert sqlx errors into an opaque internal error (details go to the logs,

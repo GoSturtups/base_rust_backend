@@ -2,8 +2,10 @@
 //!
 //! Callers never send synchronously — they [`EmailService::enqueue`] a message,
 //! and a background worker (started via the [`Module`] hook) claims planned
-//! rows, sends them over SMTP and records the outcome, retrying failures up to
-//! `email.max_send_attempts`.
+//! rows, sends them over SMTP and records the outcome. A send failure is
+//! terminal — the row is flipped to `error` with the reason stored in
+//! `last_error` and never retried — so a broken relay cannot build up a backlog
+//! that floods out once delivery recovers.
 //!
 //! Per-user email opt-out is enforced by the caller (the users module) so that
 //! one-time confirmation codes always go out regardless of the user's setting,
@@ -31,7 +33,6 @@ use uuid::Uuid;
 pub struct EmailService {
     repo: EmailRepository,
     sender: SmtpSender,
-    max_attempts: i32,
 }
 
 impl EmailService {
@@ -39,7 +40,6 @@ impl EmailService {
         Ok(Arc::new(Self {
             repo: EmailRepository::new(pool),
             sender: SmtpSender::new(config)?,
-            max_attempts: config.max_send_attempts,
         }))
     }
 
@@ -51,7 +51,7 @@ impl EmailService {
     /// Claim and attempt to deliver up to `batch` queued messages.
     /// Returns the number of messages processed.
     async fn process_batch(&self, batch: i64) -> AppResult<usize> {
-        let rows = self.repo.claim_batch(batch, self.max_attempts).await?;
+        let rows = self.repo.claim_batch(batch).await?;
         let count = rows.len();
         for row in rows {
             match self.sender.send(&row).await {
@@ -59,8 +59,9 @@ impl EmailService {
                     self.repo.mark_sent(row.id).await?;
                 }
                 Err(e) => {
-                    tracing::warn!(email_id = %row.id, error = %e, "email send failed");
-                    self.repo.mark_failed(row.id, &e.to_string()).await?;
+                    let detail = e.detail();
+                    tracing::warn!(email_id = %row.id, error = %detail, "email send failed; marking as error");
+                    self.repo.mark_error(row.id, &detail).await?;
                 }
             }
         }

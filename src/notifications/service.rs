@@ -16,17 +16,15 @@ pub struct NotificationService {
     repo: NotificationRepository,
     fcm: Arc<dyn FcmSender>,
     events: broadcast::Sender<NotificationEvent>,
-    max_attempts: i32,
 }
 
 impl NotificationService {
-    pub fn new(pool: PgPool, fcm: Arc<dyn FcmSender>, config: &NotificationsConfig) -> Arc<Self> {
+    pub fn new(pool: PgPool, fcm: Arc<dyn FcmSender>, _config: &NotificationsConfig) -> Arc<Self> {
         let (events, _) = broadcast::channel(256);
         Arc::new(Self {
             repo: NotificationRepository::new(pool),
             fcm,
             events,
-            max_attempts: config.max_send_attempts,
         })
     }
 
@@ -101,7 +99,7 @@ impl NotificationService {
     /// Claim a batch of planned notifications and push them to each of the
     /// user's enabled devices, cleaning up tokens FCM rejects.
     async fn process_batch(&self, batch: i64) -> AppResult<usize> {
-        let rows = self.repo.claim_batch(batch, self.max_attempts).await?;
+        let rows = self.repo.claim_batch(batch).await?;
         let count = rows.len();
         for row in rows {
             let devices = self.repo.deliverable_devices(row.user_id).await?;
@@ -124,9 +122,9 @@ impl NotificationService {
             if sent_any {
                 self.repo.mark_sent(row.id).await?;
             } else {
-                self.repo
-                    .mark_failed(row.id, last_error.as_deref().unwrap_or("delivery failed"))
-                    .await?;
+                let reason = last_error.as_deref().unwrap_or("delivery failed");
+                tracing::warn!(notification_id = %row.id, error = %reason, "notification delivery failed; marking as error");
+                self.repo.mark_error(row.id, reason).await?;
             }
         }
         Ok(count)

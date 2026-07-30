@@ -59,8 +59,6 @@ pub struct EmailConfig {
     pub confirm_email_before_auth: bool,
     #[serde(default = "default_worker_interval")]
     pub worker_interval_secs: u64,
-    #[serde(default = "default_max_attempts")]
-    pub max_send_attempts: i32,
 }
 
 #[derive(Debug, Clone, Default, Deserialize)]
@@ -89,8 +87,6 @@ pub struct I18nConfig {
 pub struct NotificationsConfig {
     #[serde(default = "default_worker_interval")]
     pub worker_interval_secs: u64,
-    #[serde(default = "default_max_attempts")]
-    pub max_send_attempts: i32,
 }
 
 fn default_max_connections() -> u32 {
@@ -101,9 +97,6 @@ fn default_true() -> bool {
 }
 fn default_worker_interval() -> u64 {
     10
-}
-fn default_max_attempts() -> i32 {
-    5
 }
 
 impl Config {

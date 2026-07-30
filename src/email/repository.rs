@@ -32,20 +32,22 @@ impl EmailRepository {
 
     /// Atomically claim a batch of sendable emails, flipping them to `sending`
     /// so concurrent workers never pick the same row.
-    pub async fn claim_batch(&self, limit: i64, max_attempts: i32) -> AppResult<Vec<EmailMessageRow>> {
+    ///
+    /// Only `planned` messages are ever claimed: a failed send is terminal
+    /// (`error`), so a broken relay cannot build a backlog that later floods out.
+    pub async fn claim_batch(&self, limit: i64) -> AppResult<Vec<EmailMessageRow>> {
         let rows = sqlx::query_as::<_, EmailMessageRow>(
             r#"UPDATE email_queue SET status = $1, updated_at = now()
                WHERE id IN (
                    SELECT id FROM email_queue
-                   WHERE status IN ('planned', 'failed') AND attempts < $2
+                   WHERE status = 'planned'
                    ORDER BY created_at
                    FOR UPDATE SKIP LOCKED
-                   LIMIT $3
+                   LIMIT $2
                )
                RETURNING *"#,
         )
         .bind(EmailStatus::Sending.as_str())
-        .bind(max_attempts)
         .bind(limit)
         .fetch_all(&self.pool)
         .await?;
@@ -63,13 +65,15 @@ impl EmailRepository {
         Ok(())
     }
 
-    pub async fn mark_failed(&self, id: Uuid, error: &str) -> AppResult<()> {
+    /// Mark a message as permanently failed: terminal `error` status with the
+    /// failure reason recorded. Never re-queued.
+    pub async fn mark_error(&self, id: Uuid, error: &str) -> AppResult<()> {
         sqlx::query(
             r#"UPDATE email_queue
                SET status = $1, attempts = attempts + 1, last_error = $2, updated_at = now()
                WHERE id = $3"#,
         )
-        .bind(EmailStatus::Failed.as_str())
+        .bind(EmailStatus::Error.as_str())
         .bind(error)
         .bind(id)
         .execute(&self.pool)

@@ -2,12 +2,16 @@ use chrono::{DateTime, Utc};
 use uuid::Uuid;
 
 /// Lifecycle of a queued email.
+///
+/// `Error` is terminal: a send failure is recorded and the message is never
+/// retried, so a broken SMTP relay cannot accumulate a backlog that floods out
+/// once delivery recovers. Inspect `last_error` for the reason.
 #[derive(Debug, Clone, Copy, PartialEq, Eq)]
 pub enum EmailStatus {
     Planned,
     Sending,
     Sent,
-    Failed,
+    Error,
 }
 
 impl EmailStatus {
@@ -16,7 +20,7 @@ impl EmailStatus {
             EmailStatus::Planned => "planned",
             EmailStatus::Sending => "sending",
             EmailStatus::Sent => "sent",
-            EmailStatus::Failed => "failed",
+            EmailStatus::Error => "error",
         }
     }
 }

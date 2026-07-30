@@ -117,5 +117,26 @@ credentials/services, not core logic):
 ## Tests
 
 ```bash
-cargo test          # unit tests (JWT, permissions, i18n) — no DB required
+# Unit tests (JWT, permissions, i18n) — no DB required.
+cargo test --test unit
+
+# End-to-end API & security tests — boot the real GraphQL server over HTTP and
+# drive it like a client. Needs a reachable Postgres (migrations run on boot;
+# no SMTP/FCM needed — workers are not started and one-time codes are read from
+# the DB). Point TEST_DATABASE_URL at a throwaway database:
+createdb base_backend_test
+TEST_DATABASE_URL=postgres://localhost:5432/base_backend_test \
+  cargo test --test api
+
+# Everything at once (integration tests still need TEST_DATABASE_URL / a DB):
+TEST_DATABASE_URL=postgres://localhost:5432/base_backend_test cargo test
 ```
+
+The `api` suite (`tests/api.rs`, harness in `tests/common/`) covers the security
+surface end to end: registration / email-confirmation / login and input
+validation; refresh-token rotation and misuse; rejection of invalid, tampered,
+expired, wrong-type and email-mismatched tokens; foreign-secret forgeries; the
+auth guards (unauthenticated access, permission-gated queries, field-level ACL);
+the server trusting the **database over JWT claims** (revoked permissions,
+blocked users, forged `Moderation`); anti-enumeration on login and password
+reset; and confirmation-code brute-force throttling.
