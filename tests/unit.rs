@@ -50,11 +50,10 @@ fn jwt_rejects_wrong_secret() {
 }
 
 #[test]
-fn default_permissions_match_spec() {
-    assert_eq!(
-        CorePermission::defaults(),
-        vec![CorePermission::Registered, CorePermission::ReadUsers]
-    );
+fn registration_grants_no_stored_permissions() {
+    // A freshly registered user is granted nothing; `registered` is implicit for
+    // any persisted user rather than stored (see `UserRow::permissions`).
+    assert_eq!(CorePermission::defaults(), vec![]);
 }
 
 /// Guard against accidental fail-open collisions: no two core permissions may

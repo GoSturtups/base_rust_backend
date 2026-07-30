@@ -20,9 +20,26 @@ pub struct UserRow {
 }
 
 impl UserRow {
-    /// The user's raw permission strings, as stored in the database.
+    /// The user's effective permission strings.
+    ///
+    /// [`CorePermission::Registered`] is *implicit*: every user that exists in the
+    /// database is considered registered, so it is always present here even when
+    /// the stored `permissions` column is empty. Every other permission comes from
+    /// the stored column. This is the single chokepoint feeding both the access
+    /// token ([`AuthService::tokens_for`](crate::users::service)) and the
+    /// authenticated [`CurrentUser`](crate::core::context::CurrentUser), so the
+    /// implicit permission is consistent across the whole authorization path.
     pub fn permissions(&self) -> Vec<String> {
-        self.permissions.clone()
+        let registered = CorePermission::Registered.as_str();
+        let mut perms = Vec::with_capacity(self.permissions.len() + 1);
+        perms.push(registered.to_string());
+        perms.extend(
+            self.permissions
+                .iter()
+                .filter(|p| p.as_str() != registered)
+                .cloned(),
+        );
+        perms
     }
 }
 

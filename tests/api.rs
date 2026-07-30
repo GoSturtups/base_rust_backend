@@ -34,8 +34,10 @@ async fn register_confirm_login_and_me_round_trip() {
     // Permissions are an open set, so they are exposed as raw strings (their DB
     // identities) rather than a SCREAMING_CASE GraphQL enum.
     let perms = me["data"]["me"]["permissions"].as_array().unwrap();
+    // A fresh user holds only the implicit `registered` — nothing is granted at
+    // registration.
     assert!(perms.iter().any(|p| p == "registered"));
-    assert!(perms.iter().any(|p| p == "read_users"));
+    assert!(!perms.iter().any(|p| p == "read_users"));
 
     // A confirmed user can log in and get a fresh pair.
     let login = app
@@ -262,6 +264,10 @@ async fn confirmed_user_can_list_users() {
     let email = unique_email();
     let tokens = app.register_and_confirm(&email, "password1").await;
 
+    // `read_users` is not granted at registration; assign it explicitly. Since
+    // permissions are read from the DB per request, the existing token picks it up.
+    app.set_permissions(&email, &["read_users"]).await;
+
     let list = app.gql(USERS, Some(&tokens.access)).await;
     assert!(list["errors"].is_null(), "{list}");
     assert!(list["data"]["users"]["nodes"].as_array().unwrap().len() >= 1);
@@ -275,9 +281,10 @@ async fn revoking_permission_in_db_denies_the_query() {
     let email = unique_email();
     let tokens = app.register_and_confirm(&email, "password1").await;
 
+    app.set_permissions(&email, &["read_users"]).await; // grant, so the query works
     assert!(app.gql(USERS, Some(&tokens.access)).await["errors"].is_null());
 
-    app.set_permissions(&email, &["registered"]).await; // drop read_users
+    app.set_permissions(&email, &[]).await; // drop read_users (registered stays implicit)
 
     let denied = app.gql(USERS, Some(&tokens.access)).await;
     assert!(has_error_code(&denied, "access_denied"), "{denied}");
@@ -298,6 +305,9 @@ async fn forged_permissions_in_token_are_ignored() {
     let viewer_email = unique_email();
     app.register_and_confirm(&viewer_email, "password1").await;
     let viewer_id = app.user_id(&viewer_email).await.to_string();
+    // Genuinely grant `read_users` so the list query is allowed; `moderation`
+    // is left ungranted so only the forged token claims it.
+    app.set_permissions(&viewer_email, &["read_users"]).await;
 
     // Forge a token claiming Moderation (which the DB user does NOT have).
     let forged = app.forge_access_token(

@@ -67,9 +67,15 @@ impl CorePermission {
         CorePermission::Moderation,
     ];
 
-    /// Permissions granted to a user on successful registration.
+    /// Permissions **stored** for a user on successful registration.
+    ///
+    /// Empty: a freshly registered user is granted no permissions and must have
+    /// any capability assigned explicitly. Note that [`CorePermission::Registered`]
+    /// is *not* stored here — it is implicit for every persisted user (see
+    /// [`crate::users::model::UserRow::permissions`]), so it holds even when this
+    /// list, and the stored `permissions` column, are empty.
     pub fn defaults() -> Vec<CorePermission> {
-        vec![CorePermission::Registered, CorePermission::ReadUsers]
+        vec![]
     }
 }
 
