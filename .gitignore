@@ -6,3 +6,4 @@
 # Local secret overrides
 env.local.yaml
 service-account*.json
+env.yaml
