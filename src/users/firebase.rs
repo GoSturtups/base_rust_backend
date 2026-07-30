@@ -5,6 +5,10 @@
 //! endpoint (needs only the Web API key), which also tells us whether the email
 //! is verified — the task requires sending our own confirmation code when it is
 //! not.
+//!
+//! Firebase is used solely to (1) prove the token is valid and (2) obtain and
+//! validate the email. We never surface or store the Firebase UID — users are
+//! always matched against our own database by email.
 
 use crate::core::error::{AppError, AppResult};
 use async_trait::async_trait;
@@ -12,7 +16,6 @@ use serde::Deserialize;
 
 #[derive(Debug, Clone)]
 pub struct FirebaseUser {
-    pub uid: String,
     pub email: Option<String>,
     pub email_verified: bool,
 }
@@ -54,8 +57,6 @@ struct LookupResponse {
 
 #[derive(Deserialize)]
 struct LookupUser {
-    #[serde(rename = "localId")]
-    local_id: String,
     email: Option<String>,
     #[serde(default, rename = "emailVerified")]
     email_verified: bool,
@@ -94,7 +95,6 @@ impl FirebaseVerifier for RestFirebaseVerifier {
             .ok_or_else(|| AppError::Firebase("token did not resolve to a user".into()))?;
 
         Ok(FirebaseUser {
-            uid: user.local_id,
             email: user.email,
             email_verified: user.email_verified,
         })

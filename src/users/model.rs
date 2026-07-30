@@ -13,7 +13,6 @@ pub struct UserRow {
     pub password_hash: Option<String>,
     pub email_confirmed: bool,
     pub permissions: Vec<String>,
-    pub firebase_uid: Option<String>,
     pub language: Option<String>,
     pub notifications_email: bool,
     pub blocked: bool,
