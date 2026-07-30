@@ -1,0 +1,8 @@
+/target
+**/*.rs.bk
+.env
+*.log
+.DS_Store
+# Local secret overrides
+env.local.yaml
+service-account*.json
