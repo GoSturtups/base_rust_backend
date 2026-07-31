@@ -155,10 +155,11 @@ impl NotificationRepository {
     }
 
     /// Mark a notification as permanently failed: terminal `error` status with
-    /// the failure reason recorded. Never re-queued.
+    /// the failure reason recorded. Never re-queued, so there is nothing to
+    /// count — delivery is single-shot.
     pub async fn mark_error(&self, id: Uuid, error: &str) -> AppResult<()> {
         sqlx::query(
-            "UPDATE notifications SET status = $1, attempts = attempts + 1, last_error = $2, updated_at = now() WHERE id = $3",
+            "UPDATE notifications SET status = $1, last_error = $2, updated_at = now() WHERE id = $3",
         )
         .bind(NotificationStatus::Error.as_str())
         .bind(error)

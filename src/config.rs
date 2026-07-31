@@ -63,15 +63,21 @@ pub struct EmailConfig {
 
 #[derive(Debug, Clone, Default, Deserialize)]
 pub struct FirebaseConfig {
+    /// Public Web API key — used to verify client Firebase ID tokens on social
+    /// login (Identity Toolkit REST). Not a secret.
     #[serde(default)]
     pub api_key: String,
+    /// Firebase Admin SDK service-account credentials, as the full JSON of the
+    /// downloaded key file. Required only to send push notifications (FCM v1).
+    /// The `project_id` needed for FCM is read from this JSON, so it needs no
+    /// separate field. This IS a secret — prefer the `FIREBASE__SERVICE_ACCOUNT_JSON`
+    /// env var over committing it.
     #[serde(default)]
-    pub project_id: String,
-    #[serde(default)]
-    pub service_account_path: String,
+    pub service_account_json: String,
 }
 
 impl FirebaseConfig {
+    /// Whether ID-token verification is available (needs the Web API key).
     pub fn is_enabled(&self) -> bool {
         !self.api_key.is_empty()
     }
@@ -143,8 +149,8 @@ impl Config {
         if let Ok(v) = std::env::var("FIREBASE__API_KEY") {
             self.firebase.api_key = v;
         }
-        if let Ok(v) = std::env::var("FIREBASE__PROJECT_ID") {
-            self.firebase.project_id = v;
+        if let Ok(v) = std::env::var("FIREBASE__SERVICE_ACCOUNT_JSON") {
+            self.firebase.service_account_json = v;
         }
     }
 }

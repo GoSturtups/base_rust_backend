@@ -36,7 +36,6 @@ pub struct EmailMessageRow {
     pub body_html: String,
     pub body_text: String,
     pub status: String,
-    pub attempts: i32,
     pub last_error: Option<String>,
     pub created_at: DateTime<Utc>,
     pub updated_at: DateTime<Utc>,

@@ -8,7 +8,7 @@ mod model;
 mod repository;
 mod service;
 
-pub use fcm::{FcmSender, LoggingFcmSender, SendOutcome};
+pub use fcm::{FcmSender, FcmV1Sender, LoggingFcmSender, SendOutcome};
 pub use graphql::{NotificationsMutation, NotificationsQuery, NotificationsSubscription};
 pub use model::{NewNotification, NotificationEvent};
 pub use service::{NotificationService, NotificationsModule};
@@ -18,9 +18,23 @@ use sqlx::PgPool;
 use std::sync::Arc;
 
 /// Build the notification service with the appropriate FCM sender.
+///
+/// When a Firebase Admin SDK service account is configured
+/// (`firebase.service_account_json`) real pushes are sent via FCM HTTP v1;
+/// otherwise the logging sender lets the pipeline run without credentials.
 pub fn build_notification_service(pool: PgPool, config: &Config) -> Arc<NotificationService> {
-    // A real FCM v1 sender is wired here once service-account credentials are
-    // provided; the logging sender lets the pipeline run in the meantime.
-    let fcm: Arc<dyn FcmSender> = Arc::new(LoggingFcmSender);
+    let fcm: Arc<dyn FcmSender> =
+        match FcmV1Sender::from_service_account_json(&config.firebase.service_account_json) {
+            Some(sender) => {
+                tracing::info!("FCM v1 sender enabled (service account configured)");
+                Arc::new(sender)
+            }
+            None => {
+                tracing::info!(
+                    "FCM service account not configured; using logging sender (no real pushes)"
+                );
+                Arc::new(LoggingFcmSender)
+            }
+        };
     NotificationService::new(pool, fcm, &config.notifications)
 }

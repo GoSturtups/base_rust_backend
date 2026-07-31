@@ -66,11 +66,12 @@ impl EmailRepository {
     }
 
     /// Mark a message as permanently failed: terminal `error` status with the
-    /// failure reason recorded. Never re-queued.
+    /// failure reason recorded. Never re-queued, so there is nothing to count —
+    /// sending is single-shot.
     pub async fn mark_error(&self, id: Uuid, error: &str) -> AppResult<()> {
         sqlx::query(
             r#"UPDATE email_queue
-               SET status = $1, attempts = attempts + 1, last_error = $2, updated_at = now()
+               SET status = $1, last_error = $2, updated_at = now()
                WHERE id = $3"#,
         )
         .bind(EmailStatus::Error.as_str())
