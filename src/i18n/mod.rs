@@ -50,6 +50,22 @@ impl Localizer {
         }
     }
 
+    /// Like [`Localizer::resolve`], but returns `None` when the requested
+    /// language is not one of the supported ones instead of falling back to the
+    /// default. Used to decide whether to *persist* a client's language: an
+    /// absent or unknown `Accept-Language` must not overwrite the stored
+    /// preference with the default.
+    pub fn resolve_supported(&self, requested: &str) -> Option<String> {
+        let primary = requested.split([',', '-', ';']).next().unwrap_or("").trim();
+        if primary.is_empty() {
+            return None;
+        }
+        self.supported
+            .iter()
+            .any(|s| s.eq_ignore_ascii_case(primary))
+            .then(|| primary.to_lowercase())
+    }
+
     pub fn default_language(&self) -> &str {
         &self.default_language
     }

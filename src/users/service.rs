@@ -53,7 +53,18 @@ impl AuthService {
 
     /// Validate an access token: verify the JWT signature/expiry AND confirm it
     /// still matches a live, non-blocked user with the same email.
-    pub async fn authenticate(&self, access_token: &str) -> AppResult<CurrentUser> {
+    ///
+    /// `requested_language` is the client's current UI language (from the
+    /// request's `Accept-Language`). Since the user row is loaded here on every
+    /// request anyway, we keep the stored language in step with it: a
+    /// *supported* language that differs from the stored one is persisted. An
+    /// absent or unsupported value is ignored so it can never clobber the stored
+    /// preference with the fallback.
+    pub async fn authenticate(
+        &self,
+        access_token: &str,
+        requested_language: Option<&str>,
+    ) -> AppResult<CurrentUser> {
         let claims = self.jwt.decode(access_token, TokenType::Access)?;
         let id = Uuid::parse_str(&claims.sub).map_err(|_| AppError::WrongToken)?;
         let user = self.repo.get_by_id(id).await?.ok_or(AppError::WrongToken)?;
@@ -63,6 +74,16 @@ impl AuthService {
         if user.blocked {
             return Err(AppError::AccessDenied);
         }
+
+        if let Some(lang) = requested_language.and_then(|r| self.localizer.resolve_supported(r)) {
+            if user.language.as_deref() != Some(lang.as_str()) {
+                // Best-effort: a failed language sync must not fail the request.
+                if let Err(e) = self.repo.update_language(user.id, &lang).await {
+                    tracing::warn!(error = %e, user_id = %user.id, "failed to sync user language");
+                }
+            }
+        }
+
         let permissions = user.permissions();
         Ok(CurrentUser {
             id: user.id.to_string(),

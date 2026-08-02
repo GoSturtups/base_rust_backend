@@ -84,6 +84,15 @@ impl UserRepository {
         Ok(())
     }
 
+    pub async fn update_language(&self, id: Uuid, language: &str) -> AppResult<()> {
+        sqlx::query("UPDATE users SET language = $1, updated_at = now() WHERE id = $2")
+            .bind(language)
+            .bind(id)
+            .execute(&self.pool)
+            .await?;
+        Ok(())
+    }
+
     pub async fn set_notifications_email(&self, id: Uuid, enabled: bool) -> AppResult<()> {
         sqlx::query("UPDATE users SET notifications_email = $1, updated_at = now() WHERE id = $2")
             .bind(enabled)

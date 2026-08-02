@@ -75,9 +75,16 @@ fn bearer_token(headers: &HeaderMap) -> Option<String> {
 
 /// Authenticate a bearer token, returning `None` (anonymous) on any failure so
 /// that public operations still work; guards then reject protected ones.
-async fn resolve_user(auth: &AuthService, token: Option<&str>) -> Option<CurrentUser> {
+///
+/// `requested_language` is the raw client language (e.g. from `Accept-Language`)
+/// so the auth service can keep the stored user language in sync.
+async fn resolve_user(
+    auth: &AuthService,
+    token: Option<&str>,
+    requested_language: Option<&str>,
+) -> Option<CurrentUser> {
     let token = token?;
-    match auth.authenticate(token).await {
+    match auth.authenticate(token, requested_language).await {
         Ok(user) => Some(user),
         Err(err) => {
             tracing::debug!(error = %err, "rejected access token");
@@ -93,17 +100,16 @@ pub async fn build_context(
     localizer: &Localizer,
     headers: &HeaderMap,
 ) -> RequestContext {
+    let requested_language = headers
+        .get(header::ACCEPT_LANGUAGE)
+        .and_then(|v| v.to_str().ok());
     let token = bearer_token(headers);
-    let current_user = resolve_user(auth, token.as_deref()).await;
+    let current_user = resolve_user(auth, token.as_deref(), requested_language).await;
     let device_id = headers
         .get("x-device-id")
         .and_then(|v| v.to_str().ok())
         .map(|s| s.to_string());
-    let language = localizer.resolve(
-        headers
-            .get(header::ACCEPT_LANGUAGE)
-            .and_then(|v| v.to_str().ok()),
-    );
+    let language = localizer.resolve(requested_language);
     RequestContext {
         current_user,
         device_id,
@@ -161,14 +167,15 @@ where
                         .or_else(|| params.get("authorization"))
                         .and_then(|v| v.as_str())
                         .map(|v| v.strip_prefix("Bearer ").unwrap_or(v).trim().to_string());
-                    let current_user = resolve_user(&auth, token.as_deref()).await;
+                    let requested_language =
+                        params.get("language").and_then(|v| v.as_str());
+                    let current_user =
+                        resolve_user(&auth, token.as_deref(), requested_language).await;
                     let device_id = params
                         .get("deviceId")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
-                    let language = localizer.resolve(
-                        params.get("language").and_then(|v| v.as_str()),
-                    );
+                    let language = localizer.resolve(requested_language);
 
                     let mut data = Data::default();
                     data.insert(RequestContext {

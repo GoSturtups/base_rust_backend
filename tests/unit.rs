@@ -107,6 +107,14 @@ fn localizer_resolves_and_falls_back() {
     assert_eq!(localizer.resolve(Some("de")), "en");
     assert_eq!(localizer.resolve(None), "en");
 
+    // `resolve_supported` only returns a value for genuinely supported
+    // languages — it never falls back — so it is safe to persist as the user's
+    // language without an unknown header clobbering the stored preference.
+    assert_eq!(localizer.resolve_supported("ru-RU"), Some("ru".into()));
+    assert_eq!(localizer.resolve_supported("SR"), Some("sr".into()));
+    assert_eq!(localizer.resolve_supported("de"), None);
+    assert_eq!(localizer.resolve_supported(""), None);
+
     let content = localizer.confirm_email("ru", "123456");
     assert!(content.body_text.contains("123456"));
     assert!(!content.subject.is_empty());
