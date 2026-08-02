@@ -49,5 +49,13 @@ jobs:
       - name: Cache cargo registry & build artifacts
         uses: Swatinem/rust-cache@v2
 
+      # The e2e harness loads config from env.yaml (gitignored — it holds
+      # secrets), so provide it from the committed template. The real DB URL is
+      # supplied via TEST_DATABASE_URL above; the remaining values (fake SMTP,
+      # empty Firebase key) are fine because the test harness never starts the
+      # mail/push workers and expects Firebase auth disabled.
+      - name: Provide test config
+        run: cp example.env.yaml env.yaml
+
       - name: Run unit + e2e tests
         run: cargo test --locked --verbose
