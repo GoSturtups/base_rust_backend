@@ -1,0 +1,53 @@
+name: Tests
+
+# Runs the whole `cargo test` suite: the unit tests (tests/unit.rs) and the
+# end-to-end API/security tests (tests/api.rs), which boot the real Axum +
+# GraphQL server in-process and drive it over HTTP against a live Postgres.
+#
+# Runs on every push and PR, and can be triggered by hand on any branch from the
+# Actions tab (workflow_dispatch).
+on:
+  push:
+  pull_request:
+  workflow_dispatch:
+
+jobs:
+  test:
+    runs-on: ubuntu-latest
+    permissions:
+      contents: read
+
+    # The e2e suite needs a reachable Postgres. Migrations are embedded via
+    # `sqlx::migrate!` and run automatically when the test harness boots the
+    # server, so an empty database is all that's required here.
+    services:
+      postgres:
+        image: postgres:16
+        env:
+          POSTGRES_USER: user
+          POSTGRES_PASSWORD: password
+          POSTGRES_DB: base_backend
+        ports:
+          - 5432:5432
+        options: >-
+          --health-cmd "pg_isready -U user -d base_backend"
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+
+    env:
+      # tests/common/mod.rs reads this to point the booted server at the service
+      # above; when unset it would fall back to the env.yaml dev default.
+      TEST_DATABASE_URL: postgres://user:password@localhost:5432/base_backend
+
+    steps:
+      - uses: actions/checkout@v4
+
+      - name: Install Rust toolchain
+        uses: dtolnay/rust-toolchain@stable
+
+      - name: Cache cargo registry & build artifacts
+        uses: Swatinem/rust-cache@v2
+
+      - name: Run unit + e2e tests
+        run: cargo test --locked --verbose
