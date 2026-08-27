@@ -13,7 +13,7 @@ pub use firebase::{
 };
 pub use graphql::{UsersMutation, UsersQuery};
 pub use repository::UserRepository;
-pub use service::AuthService;
+pub use service::{AuthService, WelcomeEmailFn};
 
 use crate::config::Config;
 use crate::core::jwt::JwtService;

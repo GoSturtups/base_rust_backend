@@ -439,6 +439,51 @@ async fn password_reset_does_not_leak_account_existence() {
     assert_eq!(resp["data"]["requestPasswordReset"], json!(true));
 }
 
+/// The application's welcome email goes out exactly once — on the first
+/// confirmation — and is not repeated by re-confirmations or password resets.
+#[tokio::test]
+async fn welcome_email_is_queued_once_on_first_confirmation() {
+    let app = TestApp::spawn().await;
+    let email = unique_email();
+
+    app.gql_vars(REGISTER, json!({ "email": email, "password": "password1" }), None)
+        .await;
+    // Registration alone (unconfirmed address) sends no welcome.
+    assert_eq!(app.welcome_email_count(&email).await, 0);
+
+    let code = app.confirmation_code(&email).await;
+    app.gql_vars(CONFIRM_EMAIL, json!({ "email": email, "code": code }), None)
+        .await;
+    assert_eq!(app.welcome_email_count(&email).await, 1);
+
+    // Re-confirming via a resent code must not welcome the user again.
+    let resent = app
+        .gql_vars(
+            r#"mutation($email: String!) { resendConfirmationCode(email: $email) }"#,
+            json!({ "email": email }),
+            None,
+        )
+        .await;
+    assert!(resent["errors"].is_null(), "{resent}");
+    let code = app.confirmation_code(&email).await;
+    app.gql_vars(CONFIRM_EMAIL, json!({ "email": email, "code": code }), None)
+        .await;
+    assert_eq!(app.welcome_email_count(&email).await, 1);
+
+    // A password reset confirms the mailbox too, but this one is already
+    // confirmed — still exactly one welcome.
+    app.gql_vars(REQUEST_PASSWORD_RESET, json!({ "email": email }), None)
+        .await;
+    let code = app.code_for(&email, "reset_password").await;
+    app.gql_vars(
+        CONFIRM_PASSWORD_RESET,
+        json!({ "email": email, "code": code, "pw": "password2" }),
+        None,
+    )
+    .await;
+    assert_eq!(app.welcome_email_count(&email).await, 1);
+}
+
 // ---------------------------------------------------------------------------
 // Firebase (disabled in this configuration)
 // ---------------------------------------------------------------------------

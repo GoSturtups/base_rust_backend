@@ -5,13 +5,13 @@ use crate::core::error::{AppError, AppResult};
 use crate::core::jwt::{JwtService, TokenType};
 use crate::core::permission::{permissions_to_strings, CorePermission};
 use crate::email::{EmailService, NewEmail};
-use crate::i18n::Localizer;
+use crate::i18n::{EmailContent, Localizer};
 use crate::users::firebase::FirebaseVerifier;
 use crate::users::model::{AuthTokens, User, UserConnection, UserRow};
 use crate::users::password::{generate_code, hash_password, verify_password};
 use crate::users::repository::{NewUser, UserRepository};
 use chrono::{Duration, Utc};
-use std::sync::Arc;
+use std::sync::{Arc, OnceLock};
 use uuid::Uuid;
 
 const CONFIRM_EMAIL: &str = "confirm_email";
@@ -20,6 +20,12 @@ const CODE_TTL_MINUTES: i64 = 15;
 const MAX_CODE_ATTEMPTS: i32 = 5;
 const MAX_PAGE_SIZE: i64 = 100;
 
+/// Composes the one-off welcome email for a resolved language. Installed by
+/// the consuming application ([`AuthService::set_welcome_email`]); the base
+/// crate has no product to welcome anyone to, so without a provider nothing
+/// is sent.
+pub type WelcomeEmailFn = dyn Fn(&str) -> EmailContent + Send + Sync;
+
 pub struct AuthService {
     repo: UserRepository,
     jwt: JwtService,
@@ -27,6 +33,7 @@ pub struct AuthService {
     localizer: Localizer,
     firebase: Arc<dyn FirebaseVerifier>,
     confirm_email_before_auth: bool,
+    welcome_email: OnceLock<Box<WelcomeEmailFn>>,
 }
 
 impl AuthService {
@@ -46,7 +53,18 @@ impl AuthService {
             localizer,
             firebase,
             confirm_email_before_auth,
+            welcome_email: OnceLock::new(),
         })
+    }
+
+    /// Install the welcome-email composer. The email is enqueued once per
+    /// account, at the moment the address first becomes confirmed — whichever
+    /// path gets it there (confirmation code, password reset, Firebase login
+    /// with a verified email).
+    pub fn set_welcome_email(&self, compose: Box<WelcomeEmailFn>) {
+        if self.welcome_email.set(compose).is_err() {
+            tracing::warn!("welcome-email provider is already installed; keeping the first one");
+        }
     }
 
     // ---- request-time token verification (used by the HTTP auth layer) ----
@@ -140,9 +158,17 @@ impl AuthService {
             .await?
             .ok_or(AppError::EmailNotRegistered)?;
         self.consume_code(&email, code, CONFIRM_EMAIL).await?;
+        // `resendConfirmation` also issues codes for already-confirmed
+        // accounts, so this can be a re-confirmation — only the first
+        // transition earns a welcome email.
+        let first_confirmation = !user.email_confirmed;
         self.repo.set_email_confirmed(user.id).await?;
         // reload to reflect confirmed status
         let user = self.repo.get_by_id(user.id).await?.unwrap_or(user);
+        if first_confirmation {
+            self.send_welcome(&user.email, user.language.as_deref())
+                .await;
+        }
         self.tokens_for(&user)
     }
 
@@ -218,6 +244,8 @@ impl AuthService {
         // Proving control of the mailbox also confirms the email.
         if !user.email_confirmed {
             self.repo.set_email_confirmed(user.id).await?;
+            self.send_welcome(&user.email, user.language.as_deref())
+                .await;
         }
         let user = self.repo.get_by_id(user.id).await?.unwrap_or(user);
         self.tokens_for(&user)
@@ -243,13 +271,16 @@ impl AuthService {
             Some(user) => {
                 if fb.email_verified && !user.email_confirmed {
                     self.repo.set_email_confirmed(user.id).await?;
+                    self.send_welcome(&user.email, user.language.as_deref())
+                        .await;
                     self.repo.get_by_id(user.id).await?.unwrap_or(user)
                 } else {
                     user
                 }
             }
             None => {
-                self.repo
+                let user = self
+                    .repo
                     .insert(NewUser {
                         email: email.clone(),
                         password_hash: None,
@@ -257,7 +288,14 @@ impl AuthService {
                         language: None,
                         email_confirmed: fb.email_verified,
                     })
-                    .await?
+                    .await?;
+                // Born confirmed (Firebase vouched for the mailbox) — this is
+                // the account's first confirmed moment, so welcome it now.
+                if user.email_confirmed {
+                    self.send_welcome(&user.email, user.language.as_deref())
+                        .await;
+                }
+                user
             }
         };
 
@@ -339,6 +377,30 @@ impl AuthService {
         #[cfg(debug_assertions)]
         tracing::info!(%email, %purpose, %code, "🔑 one-time code (email not delivered locally)");
         Ok(())
+    }
+
+    /// Enqueue the application's welcome email, if a composer is installed.
+    /// Best-effort: the user is waiting on the confirmation itself, so a
+    /// failure here is logged, never propagated. A fresh account also has had
+    /// no chance to opt out of email yet, so the opt-out is not consulted.
+    async fn send_welcome(&self, email: &str, language: Option<&str>) {
+        let Some(compose) = self.welcome_email.get() else {
+            return;
+        };
+        let lang = self.localizer.resolve(language);
+        let content = compose(&lang);
+        if let Err(e) = self
+            .email
+            .enqueue(NewEmail {
+                to: email.to_string(),
+                subject: content.subject,
+                body_html: content.body_html,
+                body_text: content.body_text,
+            })
+            .await
+        {
+            tracing::warn!(%email, error = %e, "failed to enqueue the welcome email");
+        }
     }
 
     async fn consume_code(&self, email: &str, code: &str, purpose: &str) -> AppResult<()> {

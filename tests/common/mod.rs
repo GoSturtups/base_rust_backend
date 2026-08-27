@@ -68,6 +68,14 @@ impl TestApp {
         let email = EmailService::new(pool.clone(), &config.email).expect("email service");
         let localizer = Localizer::new(&config.i18n);
         let auth = users::build_auth_service(pool.clone(), &config, jwt, email, localizer.clone());
+        // Install a welcome-email composer the way a consuming application
+        // would, so the first-confirmation trigger is part of the tested path.
+        auth.set_welcome_email(Box::new(|lang| base_backend::i18n::EmailContent {
+            subject: format!("welcome:{lang}"),
+            title: "Welcome".into(),
+            body_html: "<p>welcome</p>".into(),
+            body_text: "welcome".into(),
+        }));
         let notification_service = notifications::build_notification_service(pool.clone(), &config);
         let schema = build_schema(auth.clone(), notification_service);
         let state = AppState {
@@ -162,6 +170,18 @@ impl TestApp {
 
     pub async fn confirmation_code(&self, email: &str) -> String {
         self.code_for(email, "confirm_email").await
+    }
+
+    /// How many welcome emails (as composed by the harness above) have been
+    /// queued for this address.
+    pub async fn welcome_email_count(&self, email: &str) -> i64 {
+        sqlx::query_scalar::<_, i64>(
+            "SELECT count(*) FROM email_queue WHERE to_address = $1 AND subject LIKE 'welcome:%'",
+        )
+        .bind(email.to_lowercase())
+        .fetch_one(&self.pool)
+        .await
+        .expect("count welcome emails")
     }
 
     pub async fn user_id(&self, email: &str) -> Uuid {
