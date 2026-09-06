@@ -112,11 +112,16 @@ impl AuthService {
 
     // ---- registration / login ----
 
+    /// `language` is the client's UI language — the explicit mutation argument
+    /// or, failing that, the request's `Accept-Language` (the resolver picks).
+    /// Only a *supported* language is persisted on the account, the same rule
+    /// [`AuthService::authenticate`] applies when syncing it later; the
+    /// confirmation code is mailed in the resolved language either way.
     pub async fn register(
         &self,
         email: &str,
         password: &str,
-        language: Option<String>,
+        language: Option<&str>,
     ) -> AppResult<AuthTokens> {
         let email = normalize_email(email)?;
         validate_password(password)?;
@@ -124,19 +129,19 @@ impl AuthService {
             return Err(AppError::EmailAlreadyRegistered);
         }
 
+        let stored_language = language.and_then(|l| self.localizer.resolve_supported(l));
         let user = self
             .repo
             .insert(NewUser {
                 email: email.clone(),
                 password_hash: Some(hash_password(password)?),
                 permissions: permissions_to_strings(&CorePermission::defaults()),
-                language: language.clone(),
+                language: stored_language,
                 email_confirmed: false,
             })
             .await?;
 
-        self.send_code(&email, CONFIRM_EMAIL, language.as_deref())
-            .await?;
+        self.send_code(&email, CONFIRM_EMAIL, language).await?;
 
         if self.confirm_email_before_auth {
             Ok(AuthTokens {
@@ -150,7 +155,15 @@ impl AuthService {
     }
 
     /// Confirm the registration/verification code and log the user in.
-    pub async fn confirm_email(&self, email: &str, code: &str) -> AppResult<AuthTokens> {
+    ///
+    /// `language` is the client's UI language, used for the welcome email when
+    /// the account carries none (see [`AuthService::email_language`]).
+    pub async fn confirm_email(
+        &self,
+        email: &str,
+        code: &str,
+        language: Option<&str>,
+    ) -> AppResult<AuthTokens> {
         let email = normalize_email(email)?;
         let user = self
             .repo
@@ -166,22 +179,31 @@ impl AuthService {
         // reload to reflect confirmed status
         let user = self.repo.get_by_id(user.id).await?.unwrap_or(user);
         if first_confirmation {
-            self.send_welcome(&user.email, user.language.as_deref())
-                .await;
+            let lang = self.email_language(language, user.language.as_deref());
+            self.send_welcome(&user.email, lang.as_deref()).await;
         }
         self.tokens_for(&user)
     }
 
-    pub async fn resend_confirmation(&self, email: &str) -> AppResult<bool> {
+    pub async fn resend_confirmation(
+        &self,
+        email: &str,
+        language: Option<&str>,
+    ) -> AppResult<bool> {
         let email = normalize_email(email)?;
         if let Some(user) = self.repo.get_by_email(&email).await? {
-            self.send_code(&email, CONFIRM_EMAIL, user.language.as_deref())
-                .await?;
+            let lang = self.email_language(language, user.language.as_deref());
+            self.send_code(&email, CONFIRM_EMAIL, lang.as_deref()).await?;
         }
         Ok(true)
     }
 
-    pub async fn login(&self, email: &str, password: &str) -> AppResult<AuthTokens> {
+    pub async fn login(
+        &self,
+        email: &str,
+        password: &str,
+        language: Option<&str>,
+    ) -> AppResult<AuthTokens> {
         let email = normalize_email(email)?;
         let user = self
             .repo
@@ -195,8 +217,8 @@ impl AuthService {
         }
         if !user.email_confirmed {
             // resend so the user can complete verification
-            self.send_code(&email, CONFIRM_EMAIL, user.language.as_deref())
-                .await?;
+            let lang = self.email_language(language, user.language.as_deref());
+            self.send_code(&email, CONFIRM_EMAIL, lang.as_deref()).await?;
             return Err(AppError::EmailNotConfirmed);
         }
         self.tokens_for(&user)
@@ -215,11 +237,15 @@ impl AuthService {
     // ---- password reset ----
 
     /// Always returns true (does not leak whether the email exists).
-    pub async fn request_password_reset(&self, email: &str) -> AppResult<bool> {
+    pub async fn request_password_reset(
+        &self,
+        email: &str,
+        language: Option<&str>,
+    ) -> AppResult<bool> {
         let email = normalize_email(email)?;
         if let Some(user) = self.repo.get_by_email(&email).await? {
-            self.send_code(&email, RESET_PASSWORD, user.language.as_deref())
-                .await?;
+            let lang = self.email_language(language, user.language.as_deref());
+            self.send_code(&email, RESET_PASSWORD, lang.as_deref()).await?;
         }
         Ok(true)
     }
@@ -229,6 +255,7 @@ impl AuthService {
         email: &str,
         code: &str,
         new_password: &str,
+        language: Option<&str>,
     ) -> AppResult<AuthTokens> {
         let email = normalize_email(email)?;
         validate_password(new_password)?;
@@ -244,8 +271,8 @@ impl AuthService {
         // Proving control of the mailbox also confirms the email.
         if !user.email_confirmed {
             self.repo.set_email_confirmed(user.id).await?;
-            self.send_welcome(&user.email, user.language.as_deref())
-                .await;
+            let lang = self.email_language(language, user.language.as_deref());
+            self.send_welcome(&user.email, lang.as_deref()).await;
         }
         let user = self.repo.get_by_id(user.id).await?.unwrap_or(user);
         self.tokens_for(&user)
@@ -258,7 +285,17 @@ impl AuthService {
     /// our own database by that email. Firebase UIDs are never used or stored.
     /// If Firebase reports the email as unverified we send our own confirmation
     /// code and withhold tokens.
-    pub async fn firebase_auth(&self, id_token: &str) -> AppResult<AuthTokens> {
+    ///
+    /// `language` is the client's UI language (the request's `Accept-Language`).
+    /// A Firebase sign-in carries no language of its own, and a brand-new
+    /// account is welcomed right here — before any request could sync the
+    /// stored language — so the welcome (and the account's initial language)
+    /// come from the request rather than the configured default.
+    pub async fn firebase_auth(
+        &self,
+        id_token: &str,
+        language: Option<&str>,
+    ) -> AppResult<AuthTokens> {
         let fb = self.firebase.verify(id_token).await?;
 
         let email = fb
@@ -271,8 +308,8 @@ impl AuthService {
             Some(user) => {
                 if fb.email_verified && !user.email_confirmed {
                     self.repo.set_email_confirmed(user.id).await?;
-                    self.send_welcome(&user.email, user.language.as_deref())
-                        .await;
+                    let lang = self.email_language(language, user.language.as_deref());
+                    self.send_welcome(&user.email, lang.as_deref()).await;
                     self.repo.get_by_id(user.id).await?.unwrap_or(user)
                 } else {
                     user
@@ -285,15 +322,15 @@ impl AuthService {
                         email: email.clone(),
                         password_hash: None,
                         permissions: permissions_to_strings(&CorePermission::defaults()),
-                        language: None,
+                        language: language.and_then(|l| self.localizer.resolve_supported(l)),
                         email_confirmed: fb.email_verified,
                     })
                     .await?;
                 // Born confirmed (Firebase vouched for the mailbox) — this is
                 // the account's first confirmed moment, so welcome it now.
                 if user.email_confirmed {
-                    self.send_welcome(&user.email, user.language.as_deref())
-                        .await;
+                    let lang = self.email_language(language, user.language.as_deref());
+                    self.send_welcome(&user.email, lang.as_deref()).await;
                 }
                 user
             }
@@ -341,6 +378,21 @@ impl AuthService {
             refresh_token: pair.refresh_token,
             authenticated: true,
         })
+    }
+
+    /// Which language to write to a user in.
+    ///
+    /// The client's live UI language wins when we support it: it is what the
+    /// person is looking at right now, and on the unauthenticated paths
+    /// (registration, code resend, password reset) the stored language is often
+    /// still empty — which used to silently mean "the configured default",
+    /// i.e. English mail to a Russian-speaking user. The stored language is the
+    /// fallback (e.g. a request without `Accept-Language`), and only if that is
+    /// empty too does the localizer apply the configured default.
+    fn email_language(&self, requested: Option<&str>, stored: Option<&str>) -> Option<String> {
+        requested
+            .and_then(|r| self.localizer.resolve_supported(r))
+            .or_else(|| stored.map(str::to_string))
     }
 
     async fn send_code(

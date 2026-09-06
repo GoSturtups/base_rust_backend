@@ -108,12 +108,32 @@ impl TestApp {
     }
 
     pub async fn gql_vars(&self, query: &str, variables: Value, token: Option<&str>) -> Value {
+        self.gql_full(query, variables, token, None).await
+    }
+
+    /// As [`TestApp::gql_vars`], but with the client's `Accept-Language` — the
+    /// header every real client sends and the server uses to pick the language
+    /// of the emails it queues.
+    pub async fn gql_lang(&self, query: &str, variables: Value, language: &str) -> Value {
+        self.gql_full(query, variables, None, Some(language)).await
+    }
+
+    async fn gql_full(
+        &self,
+        query: &str,
+        variables: Value,
+        token: Option<&str>,
+        language: Option<&str>,
+    ) -> Value {
         let mut req = self
             .client
             .post(format!("{}/graphql", self.base_url))
             .json(&json!({ "query": query, "variables": variables }));
         if let Some(t) = token {
             req = req.header("Authorization", format!("Bearer {t}"));
+        }
+        if let Some(l) = language {
+            req = req.header("Accept-Language", l);
         }
         let resp = req.send().await.expect("graphql request");
         assert_eq!(
@@ -182,6 +202,29 @@ impl TestApp {
         .fetch_one(&self.pool)
         .await
         .expect("count welcome emails")
+    }
+
+    /// Subjects of the emails queued for this address, oldest first. The
+    /// welcome ones are `welcome:<lang>` (see the composer in `spawn`), the
+    /// one-time codes carry the localizer's own localized subject.
+    pub async fn email_subjects(&self, email: &str) -> Vec<String> {
+        sqlx::query_scalar::<_, String>(
+            "SELECT subject FROM email_queue WHERE to_address = $1 ORDER BY created_at",
+        )
+        .bind(email.to_lowercase())
+        .fetch_all(&self.pool)
+        .await
+        .expect("read queued emails")
+    }
+
+    /// The language stored on the account (`users.language`), or `None` when
+    /// the account carries no language yet.
+    pub async fn stored_language(&self, email: &str) -> Option<String> {
+        sqlx::query_scalar::<_, Option<String>>("SELECT language FROM users WHERE email = $1")
+            .bind(email.to_lowercase())
+            .fetch_one(&self.pool)
+            .await
+            .expect("user should exist")
     }
 
     pub async fn user_id(&self, email: &str) -> Uuid {
@@ -276,6 +319,13 @@ pub fn has_error_code(v: &Value, code: &str) -> bool {
 pub const REGISTER: &str = r#"
     mutation($email: String!, $password: String!) {
         register(email: $email, password: $password) { accessToken refreshToken authenticated }
+    }"#;
+
+pub const REGISTER_WITH_LANGUAGE: &str = r#"
+    mutation($email: String!, $password: String!, $language: String) {
+        register(email: $email, password: $password, language: $language) {
+            accessToken refreshToken authenticated
+        }
     }"#;
 
 pub const CONFIRM_EMAIL: &str = r#"

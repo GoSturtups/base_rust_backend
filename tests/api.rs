@@ -485,6 +485,111 @@ async fn welcome_email_is_queued_once_on_first_confirmation() {
 }
 
 // ---------------------------------------------------------------------------
+// Language of the emails we send
+// ---------------------------------------------------------------------------
+
+/// A client that only sends `Accept-Language` (no `language` argument) must
+/// still be written to in its own language: both the confirmation code and the
+/// welcome email that follows it. The regression this covers is a Russian user
+/// registering and receiving English mail, because the fresh account had no
+/// stored language yet and the server quietly used its configured default.
+#[tokio::test]
+async fn registration_emails_follow_the_clients_language() {
+    let app = TestApp::spawn().await;
+    let email = unique_email();
+
+    let reg = app
+        .gql_lang(
+            REGISTER,
+            json!({ "email": email, "password": "password1" }),
+            "ru-RU,ru;q=0.9",
+        )
+        .await;
+    assert!(reg["errors"].is_null(), "{reg}");
+
+    // The language is remembered on the account, so later mail keeps it even
+    // when a request carries no header at all.
+    assert_eq!(app.stored_language(&email).await.as_deref(), Some("ru"));
+    assert_eq!(
+        app.email_subjects(&email).await,
+        vec!["Подтверждение электронной почты"]
+    );
+
+    let code = app.confirmation_code(&email).await;
+    let confirmed = app
+        .gql_lang(CONFIRM_EMAIL, json!({ "email": email, "code": code }), "ru")
+        .await;
+    assert!(confirmed["errors"].is_null(), "{confirmed}");
+    assert!(
+        app.email_subjects(&email).await.contains(&"welcome:ru".to_string()),
+        "the welcome email must be composed in Russian, got {:?}",
+        app.email_subjects(&email).await
+    );
+}
+
+/// The explicit `language` argument is a deliberate choice by the client, so it
+/// outranks the header when the two disagree.
+#[tokio::test]
+async fn explicit_language_argument_wins_over_the_header() {
+    let app = TestApp::spawn().await;
+    let email = unique_email();
+
+    let reg = app
+        .gql_lang(
+            REGISTER_WITH_LANGUAGE,
+            json!({ "email": email, "password": "password1", "language": "sr" }),
+            "ru",
+        )
+        .await;
+    assert!(reg["errors"].is_null(), "{reg}");
+
+    assert_eq!(app.stored_language(&email).await.as_deref(), Some("sr"));
+    assert_eq!(app.email_subjects(&email).await, vec!["Потврда е-поште"]);
+}
+
+/// A language we do not support (or none at all) still falls back to the
+/// configured default, and must not be stored on the account — the stored
+/// language means "the user's choice", not "whatever a browser once sent".
+#[tokio::test]
+async fn unsupported_client_language_falls_back_to_the_default() {
+    let app = TestApp::spawn().await;
+    let email = unique_email();
+
+    app.gql_lang(
+        REGISTER,
+        json!({ "email": email, "password": "password1" }),
+        "de-DE",
+    )
+    .await;
+
+    assert_eq!(app.stored_language(&email).await, None);
+    assert_eq!(app.email_subjects(&email).await, vec!["Confirm your email"]);
+}
+
+/// The same rule on the other unauthenticated mailing paths: an account with no
+/// stored language (e.g. registered before this was tracked) gets its
+/// password-reset code in the language of the client asking for it.
+#[tokio::test]
+async fn password_reset_code_follows_the_clients_language() {
+    let app = TestApp::spawn().await;
+    let email = unique_email();
+
+    app.gql_vars(REGISTER, json!({ "email": email, "password": "password1" }), None)
+        .await;
+    assert_eq!(app.stored_language(&email).await, None);
+
+    let resp = app
+        .gql_lang(REQUEST_PASSWORD_RESET, json!({ "email": email }), "ru")
+        .await;
+    assert!(resp["errors"].is_null(), "{resp}");
+    assert!(
+        app.email_subjects(&email).await.contains(&"Сброс пароля".to_string()),
+        "the reset code must be sent in Russian, got {:?}",
+        app.email_subjects(&email).await
+    );
+}
+
+// ---------------------------------------------------------------------------
 // Firebase (disabled in this configuration)
 // ---------------------------------------------------------------------------
 
