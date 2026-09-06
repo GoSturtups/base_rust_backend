@@ -45,6 +45,12 @@ pub struct RequestContext {
     pub device_id: Option<String>,
     /// Resolved language code (falls back to the configured default).
     pub language: String,
+    /// The language exactly as the client sent it (`Accept-Language` header or
+    /// the websocket `language` param), `None` when it sent nothing. Unlike
+    /// [`RequestContext::language`] this tells "the client said nothing" apart
+    /// from "the client asked for the default", which matters where a language
+    /// is *persisted* (registration, Firebase sign-up) rather than merely used.
+    pub requested_language: Option<String>,
 }
 
 impl RequestContext {
@@ -53,6 +59,7 @@ impl RequestContext {
             current_user: None,
             device_id: None,
             language: default_language.into(),
+            requested_language: None,
         }
     }
 

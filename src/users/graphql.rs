@@ -27,6 +27,18 @@ fn service<'a>(ctx: &Context<'a>) -> async_graphql::Result<&'a Arc<AuthService>>
     ctx.data::<Arc<AuthService>>()
 }
 
+/// The language the client asked for on this very request (`Accept-Language`),
+/// untouched by the configured fallback — see
+/// [`RequestContext::requested_language`].
+///
+/// Every mailing mutation passes it down: an account created (or a mailbox
+/// contacted) by a client whose UI is Russian must not be written to in the
+/// server's default language just because nothing is stored on the account yet.
+fn requested_language(ctx: &Context<'_>) -> Option<String> {
+    ctx.data_opt::<RequestContext>()
+        .and_then(|c| c.requested_language.clone())
+}
+
 #[derive(Default)]
 pub struct UsersQuery;
 
@@ -68,7 +80,14 @@ impl UsersMutation {
         password: String,
         language: Option<String>,
     ) -> async_graphql::Result<AuthTokens> {
-        service(ctx)?.register(&email, &password, language).await.gql()
+        // The explicit argument wins; otherwise the request's own language
+        // (`Accept-Language`) stands in, so clients that never pass the
+        // argument still get their account and e-mails in their language.
+        let language = language.or_else(|| requested_language(ctx));
+        service(ctx)?
+            .register(&email, &password, language.as_deref())
+            .await
+            .gql()
     }
 
     /// Confirm the emailed code; on success the user is logged in.
@@ -78,7 +97,11 @@ impl UsersMutation {
         email: String,
         code: String,
     ) -> async_graphql::Result<AuthTokens> {
-        service(ctx)?.confirm_email(&email, &code).await.gql()
+        let language = requested_language(ctx);
+        service(ctx)?
+            .confirm_email(&email, &code, language.as_deref())
+            .await
+            .gql()
     }
 
     async fn resend_confirmation_code(
@@ -86,7 +109,11 @@ impl UsersMutation {
         ctx: &Context<'_>,
         email: String,
     ) -> async_graphql::Result<bool> {
-        service(ctx)?.resend_confirmation(&email).await.gql()
+        let language = requested_language(ctx);
+        service(ctx)?
+            .resend_confirmation(&email, language.as_deref())
+            .await
+            .gql()
     }
 
     async fn login(
@@ -95,7 +122,12 @@ impl UsersMutation {
         email: String,
         password: String,
     ) -> async_graphql::Result<AuthTokens> {
-        service(ctx)?.login(&email, &password).await.gql()
+        // An unconfirmed account gets its code re-sent from inside `login`.
+        let language = requested_language(ctx);
+        service(ctx)?
+            .login(&email, &password, language.as_deref())
+            .await
+            .gql()
     }
 
     async fn refresh_token(
@@ -111,7 +143,11 @@ impl UsersMutation {
         ctx: &Context<'_>,
         email: String,
     ) -> async_graphql::Result<bool> {
-        service(ctx)?.request_password_reset(&email).await.gql()
+        let language = requested_language(ctx);
+        service(ctx)?
+            .request_password_reset(&email, language.as_deref())
+            .await
+            .gql()
     }
 
     async fn confirm_password_reset(
@@ -121,8 +157,9 @@ impl UsersMutation {
         code: String,
         new_password: String,
     ) -> async_graphql::Result<AuthTokens> {
+        let language = requested_language(ctx);
         service(ctx)?
-            .confirm_password_reset(&email, &code, &new_password)
+            .confirm_password_reset(&email, &code, &new_password, language.as_deref())
             .await
             .gql()
     }
@@ -133,7 +170,11 @@ impl UsersMutation {
         ctx: &Context<'_>,
         id_token: String,
     ) -> async_graphql::Result<AuthTokens> {
-        service(ctx)?.firebase_auth(&id_token).await.gql()
+        let language = requested_language(ctx);
+        service(ctx)?
+            .firebase_auth(&id_token, language.as_deref())
+            .await
+            .gql()
     }
 
     /// Toggle the caller's email notifications (does not affect one-time codes).

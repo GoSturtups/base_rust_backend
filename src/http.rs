@@ -114,6 +114,7 @@ pub async fn build_context(
         current_user,
         device_id,
         language,
+        requested_language: requested_language.map(str::to_string),
     }
 }
 
@@ -182,6 +183,7 @@ where
                         current_user,
                         device_id,
                         language,
+                        requested_language: requested_language.map(str::to_string),
                     });
                     Ok(data)
                 })
